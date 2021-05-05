@@ -39,7 +39,7 @@ void setup() {
   pinMode(switch_pin, INPUT);
 }
 
-void loop() {
+double getXAxisAcceleration() {
   sensors_event_t event;
   accel.getEvent(&event);
   double acc = event.acceleration.x;
@@ -50,6 +50,12 @@ void loop() {
     acc = acc - sensorResolution;
     acc = acc - xError;
   }
+  return acc;
+}
+
+void loop() {
+  double acc = getXAxisAcceleration();
+  // check if the light was on for 8 iterations and turn it off
   if (loopIterator == 8) {
     loopIterator = 0;
     light = false;
@@ -57,21 +63,14 @@ void loop() {
   }
   val = digitalRead(switch_pin); // check mercury switch state
   if (val == HIGH) {
+    bool turnOn = false;
     if (light) {
       if (sideOn == LEFT && acc < 0) {
         sideOn = RIGHT;
-        light = true;
-        loopIterator = -1;
-        Serial.print("Turn "); Serial.print(sideOn); Serial.println(" light on.");
-        turnOffTurnLight(LEFT);
-        turnOffTurnLight(RIGHT);
+        turnOn = true;
       } else if (sideOn == RIGHT && acc >= 0) {
         sideOn = LEFT;
-        light = true;
-        loopIterator = -1;
-        Serial.print("Turn "); Serial.print(sideOn); Serial.println(" light on.");
-        turnOffTurnLight(LEFT);
-        turnOffTurnLight(RIGHT);
+        turnOn = true;
       }
     } else {
       if (acc < 0) {
@@ -79,6 +78,9 @@ void loop() {
       } else {
         sideOn = LEFT;
       }
+      turnOn = true;
+    }
+    if(turnOn) {
       light = true;
       loopIterator = -1;
       Serial.print("Turn "); Serial.print(sideOn); Serial.println(" light on.");
@@ -87,6 +89,7 @@ void loop() {
     }
   }
   if (light) {
+    // light should blink
     if (isOn) {
       turnOffTurnLight(sideOn);
       isOn = false;
@@ -95,6 +98,7 @@ void loop() {
       isOn = true;
     }
   } else {
+    // light should be off
     turnOffTurnLight(LEFT);
     turnOffTurnLight(RIGHT);
   }
