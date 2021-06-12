@@ -1,0 +1,5 @@
+Sending braking signals:
+
+When biker starts to squeeze brakes there should be sent a signal for 'action' constantly. When biker stops squeezing brakes the sending of signals should stop and not be sent.
+
+Action signal message: "1"
