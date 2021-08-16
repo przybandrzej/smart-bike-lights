@@ -1,12 +1,11 @@
 #include "BLEDevice.h"
-#include <Wire.h>
+#include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
-#include <Adafruit_ADXL345_U.h>
+#include <Wire.h>
 #include <Adafruit_NeoPixel.h>
 
 #define leftStripPin 18
 #define rightStripPin 19
-#define tilt_sensor_pin 4
 
 // The remote service we wish to connect to.
 static BLEUUID serviceUUID("4fafc201-1fb5-459e-8fcc-c5c9c331914b");
@@ -17,6 +16,11 @@ static boolean connected = false;
 static boolean doScan = false;
 static BLERemoteCharacteristic* pRemoteCharacteristic;
 static BLEAdvertisedDevice* myDevice;
+
+Adafruit_MPU6050 mpu;
+double prevAngleX = 0;
+double prevAngleY = 0;
+double prevAngleZ = 0;
 
 Adafruit_NeoPixel leftStrip = Adafruit_NeoPixel(8, leftStripPin, NEO_GRB + NEO_KHZ800);
 Adafruit_NeoPixel rightStrip = Adafruit_NeoPixel(8, rightStripPin, NEO_GRB + NEO_KHZ800);
@@ -75,12 +79,6 @@ class TurnLightData {
 };
 TurnLightData turnLightData = TurnLightData();
 bool tilt = false;
-
-struct AccelData {
-  Adafruit_ADXL345_Unified accel = Adafruit_ADXL345_Unified(12345);
-  double xError = 0;
-  double sensorResolution = 0;
-} accelData;
 
 bool stopLights = false;
 
@@ -201,22 +199,44 @@ static void notifyCallback(BLERemoteCharacteristic* pBLERemoteCharacteristic, ui
   }
 }
 
-void tiltDetected() {
-  tilt = true;
+double computeAngle(double measurement,double prevAngle) {
+  return (prevAngle + 0.005*measurement);
 }
 
-double getXAxisAcceleration() {
-  sensors_event_t event;
-  accelData.accel.getEvent(&event);
-  double acc = event.acceleration.x;
-  if (acc < 0) {
-    acc = acc + accelData.sensorResolution;
-    acc = acc + accelData.xError;
-  } else if (acc > 0 ) {
-    acc = acc - accelData.sensorResolution;
-    acc = acc - accelData.xError;
-  }
-  return acc;
+Side checkTilt() {
+  sensors_event_t a, g, temp;
+  mpu.getEvent(&a, &g, &temp);
+  double y = g.gyro.y + 0.05;
+  double x = g.gyro.x + 0.05;
+  double z = g.gyro.z - 0.07;
+  Serial.print("Measure ");
+  Serial.print(x, 3);
+  Serial.print(" ");
+  Serial.print(y, 3);
+  Serial.print(" ");
+  Serial.println(z, 3);
+  double angleX = computeAngle(x, prevAngleX);
+  prevAngleX = angleX;
+  double angleY = computeAngle(y, prevAngleY);
+  prevAngleY = angleY;
+  double angleZ = computeAngle(z, prevAngleZ);
+  prevAngleZ = angleZ;
+  Serial.print("Angle ");
+  Serial.print(angleX);
+  Serial.print(" ");
+  Serial.print(angleY);
+  Serial.print(" ");
+  Serial.println(angleZ);
+  Side side = LEFT;
+  /*if(x > 0.3) {
+    tilt = true;
+    side = RIGHT;
+    Serial.println("Tilt right");
+  } else if(x < -0.3) {
+    tilt = true;
+    Serial.println("Tilt left");
+  }*/
+  return side;
 }
 
 void setPixels(const uint32_t* color, int firstPixel, int lastPixel, Adafruit_NeoPixel* strip) {
@@ -250,15 +270,12 @@ void turnOffLights() {
 }
 
 void setup() {
-  accelData.accel.begin();
-  accelData.accel.setRange(ADXL345_RANGE_2_G);
-  sensor_t sensor;
-  accelData.accel.getSensor(&sensor);
-  accelData.sensorResolution = sensor.resolution;
-  pinMode(tilt_sensor_pin, INPUT);
+  mpu.begin();
+  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+  mpu.setGyroRange(MPU6050_RANGE_250_DEG);
+  mpu.setFilterBandwidth(MPU6050_BAND_5_HZ);
   leftStrip.begin();
   rightStrip.begin();
-  attachInterrupt(tilt_sensor_pin, tiltDetected, RISING);
 
   Serial.begin(115200);
   Serial.println("Starting Arduino BLE Client application...");
@@ -276,13 +293,13 @@ void setup() {
 
 void turnLights() {
   if (turnLightData.isLoopEnd()) {
-    Serial.println("One loop end");
+    //Serial.println("One loop end");
     turnLightData.loopsLeft--;
     turnLightData.resetPixels();
   }
   for (short i = 0; i < 5; i++) {
     short pixel = turnLightData.pixels[i];
-    Serial.print("Setting pixel: "); Serial.print(pixel); Serial.println(" on");
+    //Serial.print("Setting pixel: "); Serial.print(pixel); Serial.println(" on");
     turnLightData.strip->setPixelColor(pixel, orange);
   }
   for (short i = 0; i < 8; i++) {
@@ -294,7 +311,7 @@ void turnLights() {
       }
     }
     if (!in) {
-      Serial.print("Setting pixel: "); Serial.print(i); Serial.println(" off");
+      //Serial.print("Setting pixel: "); Serial.print(i); Serial.println(" off");
       turnLightData.strip->setPixelColor(i, offColor);
     }
   }
@@ -304,24 +321,19 @@ void turnLights() {
 }
 
 void loop() {
+  int start = millis();
   bleLoop();
   turnOffLights();
   if (stopLights) {
     stopLight();
     stopLights = false;
   }
+  Side side = checkTilt();
   if (tilt) {
     turnLightData.tilt = true;
     tilt = false;
   }
   if (turnLightData.tilt) {
-    double acc = getXAxisAcceleration();
-    Side side = LEFT;
-    if (acc < 0) {
-      side = RIGHT;
-    } else {
-      side = LEFT;
-    }
     if (turnLightData.sideOn != side) {
       turnLightData.reset();
       turnLightData.sideOn = side;
@@ -337,4 +349,6 @@ void loop() {
       turnLights();
     }
   }
+  int finish = millis();
+  Serial.println(finish - start);
 }
